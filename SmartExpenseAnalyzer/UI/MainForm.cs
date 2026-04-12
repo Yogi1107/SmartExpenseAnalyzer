@@ -47,6 +47,12 @@ namespace SmartExpenseAnalyzer.UI
         private DateTimePicker dtpDate;
         private TextBox txtDescription;
 
+        // Spending Insights panel controls
+        private Label _lblTopCategory;
+        private Label _lblExpensiveDay;
+        private Label _lblAvgDaily;
+        private ListBox _lstSuggestions;
+
         private readonly ExpenseManager _expenseManager = new ExpenseManager();
 
         // ── Constructor ───────────────────────────────────────────────────
@@ -397,6 +403,7 @@ namespace SmartExpenseAnalyzer.UI
         {
             var panel = CreateMiniWindow("Spending Insights");
 
+            // ── Stats Box ────────────────────────────────────────────────────
             var statsBox = new Panel
             {
                 Location = new Point(10, 45),
@@ -404,11 +411,15 @@ namespace SmartExpenseAnalyzer.UI
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle
             };
-            statsBox.Controls.Add(MakeInsightRow("Top Spending Category:", "—", 12));
-            statsBox.Controls.Add(MakeInsightRow("Most Expensive Day:", "—", 48));
-            statsBox.Controls.Add(MakeInsightRow("Average Daily Spend:", "₹ 0", 84));
+
+            // Build rows and capture the value labels
+            _lblTopCategory = AddInsightRow(statsBox, "Top Spending Category:", "—", 12);
+            _lblExpensiveDay = AddInsightRow(statsBox, "Most Expensive Day:", "—", 48);
+            _lblAvgDaily = AddInsightRow(statsBox, "Average Daily Spend:", "₹ 0", 84);
+
             panel.Controls.Add(statsBox);
 
+            // ── Suggestions Box ───────────────────────────────────────────────
             var sugBox = new Panel
             {
                 Location = new Point(10, 178),
@@ -416,6 +427,7 @@ namespace SmartExpenseAnalyzer.UI
                 BackColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle
             };
+
             var sugHeader = new Panel { Dock = DockStyle.Top, Height = 30, BackColor = TitleBarColor };
             sugHeader.Controls.Add(new Label
             {
@@ -428,7 +440,7 @@ namespace SmartExpenseAnalyzer.UI
             });
             sugBox.Controls.Add(sugHeader);
 
-            var lstSug = new ListBox
+            _lstSuggestions = new ListBox
             {
                 Location = new Point(0, 30),
                 Size = new Size(636, 128),
@@ -436,15 +448,47 @@ namespace SmartExpenseAnalyzer.UI
                 Font = new Font("Segoe UI", 9.5f),
                 BackColor = Color.White
             };
-            lstSug.Items.Add("  •  Add expenses to see personalised suggestions.");
-            sugBox.Controls.Add(lstSug);
+            _lstSuggestions.Items.Add("  •  Add expenses to see personalised suggestions.");
+            sugBox.Controls.Add(_lstSuggestions);
             panel.Controls.Add(sugBox);
 
+            // ── Generate Report Button ────────────────────────────────────────
             var btnReport = MakeButton("Generate Report PDF", BtnBlue, 190, 360);
             btnReport.Size = new Size(260, 42);
+            btnReport.Click += BtnGenerateReport_Click;
             panel.Controls.Add(btnReport);
 
             return panel;
+        }
+
+        // ── Row factory that returns the value label so we can update it later ──
+        private Label AddInsightRow(Panel parent, string key, string value, int y)
+        {
+            var row = new Panel { Location = new Point(0, y), Size = new Size(638, 36) };
+
+            row.Controls.Add(new Label
+            {
+                Text = key,
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                ForeColor = TitleBarColor,
+                Location = new Point(12, 0),
+                Size = new Size(240, 36),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            var valLabel = new Label
+            {
+                Text = value,
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(40, 40, 40),
+                Location = new Point(252, 0),
+                Size = new Size(370, 36),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            row.Controls.Add(valLabel);
+            parent.Controls.Add(row);
+            return valLabel;   // caller stores this reference
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -560,6 +604,7 @@ namespace SmartExpenseAnalyzer.UI
                 UpdateStatBoxes();
                 UpdateAlerts();
                 UpdateCharts();
+                UpdateInsightsPanel();
                 LoadGrid();
                 dgvHistory.DataSource = null;
                 dgvHistory.DataSource = _expenses
@@ -862,6 +907,7 @@ namespace SmartExpenseAnalyzer.UI
                     UpdateStatBoxes();
                     UpdateAlerts();
                     UpdateCharts();
+                    UpdateInsightsPanel();
                     LoadGrid();
                 }
             }
@@ -870,6 +916,91 @@ namespace SmartExpenseAnalyzer.UI
                 MessageBox.Show($"Could not load saved expenses:\n{ex.Message}",
                                 "Load Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        private void UpdateInsightsPanel()
+        {
+            if (_lblTopCategory == null) return;
+            if (_expenses.Count == 0)
+            {
+                _lblTopCategory.Text = "—";
+                _lblExpensiveDay.Text = "—";
+                _lblAvgDaily.Text = "₹ 0";
+
+                _lstSuggestions.Items.Clear();
+                _lstSuggestions.Items.Add("  •  Add expenses to see personalised suggestions.");
+                return;
+            }
+
+            // ── Top spending category ─────────────────────────────────────────
+            var catTotals = new Dictionary<string, double>();
+            foreach (var exp in _expenses)
+            {
+                if (!catTotals.ContainsKey(exp.Category)) catTotals[exp.Category] = 0;
+                catTotals[exp.Category] += exp.Amount;
+            }
+            string topCat = "";
+            double topAmt = 0;
+            foreach (var kv in catTotals)
+                if (kv.Value > topAmt) { topAmt = kv.Value; topCat = kv.Key; }
+
+            _lblTopCategory.Text = $"{topCat}  (₹{topAmt:N0})";
+
+            // ── Most expensive single day ─────────────────────────────────────
+            var dayTotals = new Dictionary<string, double>();
+            foreach (var exp in _expenses)
+            {
+                if (!dayTotals.ContainsKey(exp.Date)) dayTotals[exp.Date] = 0;
+                dayTotals[exp.Date] += exp.Amount;
+            }
+            string topDay = "";
+            double topDayAmt = 0;
+            foreach (var kv in dayTotals)
+                if (kv.Value > topDayAmt) { topDayAmt = kv.Value; topDay = kv.Key; }
+
+            _lblExpensiveDay.Text = $"{topDay}  (₹{topDayAmt:N0})";
+
+            // ── Average daily spend ───────────────────────────────────────────
+            double avgDaily = dayTotals.Count > 0
+                ? _expenses.Sum(e => e.Amount) / dayTotals.Count
+                : 0;
+            _lblAvgDaily.Text = $"₹ {avgDaily:N0}";
+
+            // ── Suggestions ───────────────────────────────────────────────────
+            _lstSuggestions.Items.Clear();
+            double totalSpent = _expenses.Sum(e => e.Amount);
+
+            foreach (var kv in catTotals)
+            {
+                double pct = totalSpent > 0 ? (kv.Value / totalSpent) * 100 : 0;
+
+                if (kv.Key == "Food" && kv.Value > 5000)
+                    _lstSuggestions.Items.Add($"  •  Food spending is ₹{kv.Value:N0} — try meal prepping to save.");
+
+                if (kv.Key == "Shopping" && kv.Value > 3000)
+                    _lstSuggestions.Items.Add($"  •  Shopping is ₹{kv.Value:N0} — consider a weekly spending cap.");
+
+                if (kv.Key == "Travel" && pct > 25)
+                    _lstSuggestions.Items.Add($"  •  Travel is {pct:F0}% of spend — carpooling could help.");
+
+                if (kv.Key == "Bills" && pct > 35)
+                    _lstSuggestions.Items.Add($"  •  Bills are {pct:F0}% of spend — review subscriptions.");
+
+                if (pct > 50)
+                    _lstSuggestions.Items.Add($"  •  {kv.Key} dominates at {pct:F0}% — consider rebalancing.");
+            }
+
+            if (avgDaily > 1000)
+                _lstSuggestions.Items.Add($"  •  Daily average ₹{avgDaily:N0} is high — set a daily limit.");
+
+            if (_lstSuggestions.Items.Count == 0)
+                _lstSuggestions.Items.Add("  ✅  Spending looks balanced. Keep it up!");
+        }
+
+        private void BtnGenerateReport_Click(object sender, EventArgs e)
+        {
+            MessageBox.Show("PDF report generation coming soon!", "Report",
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 }
